@@ -1,115 +1,128 @@
-﻿import type { LapSnapshot } from "@/types/f1";
+﻿import type { Compound, Driver, LapSnapshot, TrackStatus } from "@/types/f1";
+import silverstonePreset from "@/data/presets/2024_silverstone_r.json";
+import monzaPreset from "@/data/presets/2024_monza_r.json";
+import singaporePreset from "@/data/presets/2023_singapore_r.json";
 
-const FALLBACK_PRESETS: Record<string, LapSnapshot> = {
-  silverstone: {
-    name: "2024 British Grand Prix",
-    circuit: "Silverstone",
-    totalLaps: 60,
-    currentLap: 1,
-    weather: { airTemp: 16, trackTemp: 22, rainfall: false, flag: "GREEN" },
-    trackStatus: "GREEN",
-    drivers: [
-      { driverId: "LEC", teamName: "Ferrari", teamColor: "#DC143C", position: 1, gapAhead: null, gapToLeader: 0, intervalAhead: null, compound: "SOFT", tyreAge: 0, pitStops: 0, lastLapTime: 93.5 },
-      { driverId: "VER", teamName: "Red Bull Racing", teamColor: "#1D3557", position: 2, gapAhead: null, gapToLeader: 0.8, intervalAhead: null, compound: "SOFT", tyreAge: 0, pitStops: 0, lastLapTime: 93.7 },
-      { driverId: "NOR", teamName: "McLaren", teamColor: "#F14A68", position: 3, gapAhead: null, gapToLeader: 1.5, intervalAhead: null, compound: "SOFT", tyreAge: 0, pitStops: 0, lastLapTime: 94.0 },
-      { driverId: "HAM", teamName: "Mercedes", teamColor: "#006E51", position: 4, gapAhead: null, gapToLeader: 2.1, intervalAhead: null, compound: "SOFT", tyreAge: 0, pitStops: 0, lastLapTime: 94.4 },
-      { driverId: "PIA", teamName: "Aston Martin", teamColor: "#006A62", position: 5, gapAhead: null, gapToLeader: 3.2, intervalAhead: null, compound: "SOFT", tyreAge: 0, pitStops: 0, lastLapTime: 95.1 },
-    ],
-    laps: [],
-  },
+export const dynamic = "force-dynamic";
+
+const PRESET_MAP: Record<string, LapSnapshot> = {
+  "2024_silverstone_r": silverstonePreset as unknown as LapSnapshot,
+  silverstone: silverstonePreset as unknown as LapSnapshot,
+  "2024_monza_r": monzaPreset as unknown as LapSnapshot,
+  monza: monzaPreset as unknown as LapSnapshot,
+  "2023_singapore_r": singaporePreset as unknown as LapSnapshot,
+  singapore: singaporePreset as unknown as LapSnapshot,
 };
 
-function generateLaps(preset: string): LapSnapshot[] {
-  const base = FALLBACK_PRESETS[preset];
-  if (!base) return [];
+const OPENF1_BASE = "https://api.openf1.org/v1";
 
-  const laps: LapSnapshot[] = [];
+function sliceSnapshotToLap(base: LapSnapshot, requestedLap?: number): LapSnapshot {
+  const allLaps = base.laps ?? [];
+  const totalLaps = base.totalLaps || allLaps.length || 53;
+  const targetLap =
+    requestedLap && Number.isFinite(requestedLap) && requestedLap >= 1
+      ? Math.min(Math.floor(requestedLap), totalLaps)
+      : base.currentLap || 1;
 
-  for (let lap = 1; lap <= base.totalLaps; lap++) {
-    const progress = lap / base.totalLaps;
-    const drivers = base.drivers
-      .map((d, idx) => {
-        const compound = d.position <= 3 ? (progress < 0.5 ? "SOFT" : "MEDIUM") : "HARD";
-        const tyreAge = Math.floor(lap * (0.5 + progress));
-        const degradationFactor = Math.max(0, 1 + tyreAge * 0.15 / 30);
-        const baseTime = (d.lastLapTime ?? 92.0) * degradationFactor;
-        const gap = d.gapToLeader + (progress > 0.5 ? progress * 2 : progress);
+  const lapEntry = allLaps.find((l) => l.lap === targetLap);
+  const drivers = lapEntry?.drivers?.length ? lapEntry.drivers : base.drivers;
 
-        return {
-          driverId: d.driverId,
-          teamName: d.teamName,
-          teamColor: d.teamColor,
-          position: Math.min(d.position + Math.floor(progress * 2) - 1, 20),
-          gapAhead: d.gapAhead,
-          gapToLeader: gap,
-          intervalAhead: d.intervalAhead,
-          compound,
-          tyreAge,
-          pitStops: d.pitStops + (lap > 35 && idx < 2 ? 1 : 0),
-          lastLapTime: baseTime,
-        };
-      });
-
-    laps.push({
-      lap,
-      drivers,
-      weather: base.weather,
-      trackStatus: "GREEN",
-      totalLaps: base.totalLaps,
-    });
-  }
-
-  return laps;
+  return {
+    ...base,
+    currentLap: targetLap,
+    lap: targetLap,
+    totalLaps,
+    drivers,
+    weather: lapEntry?.weather ?? base.weather,
+    trackStatus: (lapEntry?.trackStatus ?? base.trackStatus ?? "GREEN") as TrackStatus,
+    laps: allLaps,
+  };
 }
-
-Object.keys(FALLBACK_PRESETS).forEach((key) => {
-  FALLBACK_PRESETS[key].laps = generateLaps(key);
-});
-
-const BASE = "https://api.openf1.org/v1";
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const sessionKey = url.searchParams.get("sessionKey");
+  const rawPreset = (
+    url.searchParams.get("preset") ??
+    url.searchParams.get("dataset") ??
+    url.searchParams.get("session") ??
+    "2024_monza_r"
+  ).toLowerCase();
+  const lapParam = Number(url.searchParams.get("lap"));
+  const requestedLap = Number.isFinite(lapParam) && lapParam >= 1 ? lapParam : undefined;
 
-  // If no session key, return a fallback preset
   if (!sessionKey) {
-    return Response.json(FALLBACK_PRESETS.silverstone);
+    const selected = PRESET_MAP[rawPreset] ?? PRESET_MAP["2024_monza_r"];
+    return Response.json(sliceSnapshotToLap(selected, requestedLap));
   }
 
   try {
-    const key = parseInt(sessionKey);
-    // Fetch drivers from OpenF1
-    const driversRes = await fetch(`${BASE}/drivers?session_key=${key}`);
-    const driversData = await driversRes.ok ? await driversRes.json() : [];
+    const key = sessionKey === "latest" ? "latest" : String(parseInt(sessionKey, 10));
+    const [driversRes, intervalsRes, weatherRes] = await Promise.all([
+      fetch(${OPENF1_BASE}/drivers?session_key=, { next: { revalidate: 15 } }),
+      fetch(${OPENF1_BASE}/intervals?session_key=, { next: { revalidate: 15 } }),
+      fetch(${OPENF1_BASE}/weather?session_key=, { next: { revalidate: 30 } }),
+    ]);
 
-    // Build snapshot
-    const snapshot: LapSnapshot = {
-      name: "Live Session",
-      circuit: "Live",
-      totalLaps: 50,
-      currentLap: 1,
-      weather: { airTemp: 22, trackTemp: 30, rainfall: false, flag: "GREEN" },
-      trackStatus: "GREEN",
-      drivers: (driversData as any[]).map((d: any, i: number) => ({
-        driverId: d.driver_name || d.driverId,
-        teamName: d.team_name || "Unknown",
-        teamColor: "#333333",
-        position: d.position || i,
-        gapAhead: d.interval_to_front || null,
-        gapToLeader: d.interval_to_front || 0,
-        intervalAhead: d.interval_to_front || null,
-        compound: "MEDIUM" as any,
-        tyreAge: 0,
+    const driversData = driversRes.ok ? await driversRes.json() : [];
+    const intervalsData = intervalsRes.ok ? await intervalsRes.json() : [];
+    const weatherData = weatherRes.ok ? await weatherRes.json() : [];
+
+    if (!Array.isArray(driversData) || driversData.length === 0) {
+      return Response.json(sliceSnapshotToLap(PRESET_MAP[rawPreset] ?? PRESET_MAP["2024_monza_r"], requestedLap));
+    }
+
+    const latestIntervals = new Map<number, { gap_to_leader?: number; interval?: number }>();
+    if (Array.isArray(intervalsData)) {
+      for (const item of intervalsData) {
+        if (typeof item.driver_number === "number") {
+          latestIntervals.set(item.driver_number, item);
+        }
+      }
+    }
+
+    const latestWeather = Array.isArray(weatherData) && weatherData.length > 0 ? weatherData[weatherData.length - 1] : null;
+
+    const drivers: Driver[] = driversData.slice(0, 20).map((d: Record<string, unknown>, idx: number) => {
+      const drvNum = typeof d.driver_number === "number" ? d.driver_number : idx + 1;
+      const interval = latestIntervals.get(drvNum);
+      const rawTeamColor = typeof d.team_colour === "string" && d.team_colour ? # : "#3B82F6";
+      return {
+        driverId: String(d.name_acronym || d.broadcast_name || DRV),
+        driverName: String(d.full_name || d.name_acronym || Driver ),
+        teamName: String(d.team_name || "Constructor"),
+        teamColor: rawTeamColor,
+        position: idx + 1,
+        gapAhead: typeof interval?.interval === "number" ? interval.interval : null,
+        gapToLeader: typeof interval?.gap_to_leader === "number" ? interval.gap_to_leader : idx * 1.1,
+        intervalAhead: typeof interval?.interval === "number" ? interval.interval : null,
+        compound: "MEDIUM" as Compound,
+        tyreAge: 5,
         pitStops: 0,
-        lastLapTime: d.last_lap_time || 90,
-      })),
+        lastLapTime: 91.5 + idx * 0.12,
+      };
+    });
+
+    const snapshot: LapSnapshot = {
+      sessionId: key,
+      name: OpenF1 Live Session (),
+      circuit: "Live Circuit",
+      totalLaps: 53,
+      currentLap: 1,
+      lap: 1,
+      weather: {
+        airTemp: typeof latestWeather?.air_temperature === "number" ? latestWeather.air_temperature : 24,
+        trackTemp: typeof latestWeather?.track_temperature === "number" ? latestWeather.track_temperature : 34,
+        rainfall: Boolean(latestWeather?.rainfall),
+        flag: "GREEN",
+      },
+      trackStatus: "GREEN",
+      drivers,
       laps: [],
     };
 
     return Response.json(snapshot);
-  } catch (e) {
-    // Fallback on any error
-    return Response.json(FALLBACK_PRESETS.silverstone);
+  } catch {
+    return Response.json(sliceSnapshotToLap(PRESET_MAP[rawPreset] ?? PRESET_MAP["2024_monza_r"], requestedLap));
   }
 }
