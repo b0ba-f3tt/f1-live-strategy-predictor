@@ -74,12 +74,14 @@ export function detectTireCliffs(
 ): CliffDetection[] {
   const detections: CliffDetection[] = [];
   for (const snap of snapshots) {
+    const snapLap = snap.lap;
+    if (snapLap === undefined) continue;
     const driver = snap.drivers.find((d) => d.driverId === driverId);
     if (!driver) continue;
     const age = driver.tyreAge;
     if (age < 3) continue;
     // Find this driver's own recent lap times to compute a baseline
-    const prior = snapshots.filter((s) => s.lap < snap.lap);
+    const prior = snapshots.filter((s) => s.lap !== undefined && s.lap < snapLap);
     const ownTimes = prior
       .map((s) => s.drivers.find((d) => d.driverId === driverId)?.lastLapTime)
       .filter((t): t is number => t != null);
@@ -95,7 +97,7 @@ export function detectTireCliffs(
     if (delta > threshold) {
       detections.push({
         driverId,
-        lap: snap.lap,
+        lap: snapLap,
         tyreAge: age,
         compound: driver.compound,
         severity: delta > 1.5 ? "HIGH" : delta > 1.0 ? "MEDIUM" : "LOW",

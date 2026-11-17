@@ -1,4 +1,4 @@
-import type { LapSnapshot } from "@/types/f1";
+﻿import type { LapSnapshot } from "@/types/f1";
 
 const FALLBACK_PRESETS: Record<string, LapSnapshot> = {
   silverstone: {
@@ -32,7 +32,7 @@ function generateLaps(preset: string): LapSnapshot[] {
         const compound = d.position <= 3 ? (progress < 0.5 ? "SOFT" : "MEDIUM") : "HARD";
         const tyreAge = Math.floor(lap * (0.5 + progress));
         const degradationFactor = Math.max(0, 1 + tyreAge * 0.15 / 30);
-        const baseTime = d.lastLapTime * degradationFactor;
+        const baseTime = (d.lastLapTime ?? 92.0) * degradationFactor;
         const gap = d.gapToLeader + (progress > 0.5 ? progress * 2 : progress);
 
         return {

@@ -1,4 +1,4 @@
-import { generateBriefing } from "@/lib/strategyAgent";
+﻿import { generateBriefing } from "@/lib/strategyAgent";
 import type { Strategy } from "@/types/f1";
 
 const DEFAULT_STRATEGIES: Strategy[] = [
@@ -21,7 +21,7 @@ export async function POST(request: Request) {
       ? new Map(Object.entries(body.customStrategies).map(([k, v]) => [k, v as Strategy]))
       : undefined;
 
-    const briefing = generateBriefing({
+    const briefing = await generateBriefing({
       drivers: driverIds,
       snapshot,
       currentLap: currentLap || 1,
@@ -35,3 +35,4 @@ export async function POST(request: Request) {
     return Response.json({ error: "Agent failed", details: String(e) }, { status: 500 });
   }
 }
+

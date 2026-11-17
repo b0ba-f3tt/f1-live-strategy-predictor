@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Autonomous multi-step AI Race Strategist.
  * Returns LLM-powered or deterministic strategy briefings.
  */
@@ -81,9 +81,10 @@ export function runDeterministic(
 
   // Detect cliffs
   for (const driverId of driverIds) {
-    const cliffs = detectTireCliffs(snapshot.laps, driverId);
+    const cliffs = detectTireCliffs((snapshot.laps ?? []), driverId);
     for (const c of cliffs) {
       alerts.push({
+        driverId,
         lap: c.lap,
         type: "CLIFF",
         message: `${driverId}: ${c.compound} cliff at tyreAge ${c.tyreAge} (+${c.deltaVsMedian.toFixed(2)}s)`,
@@ -107,7 +108,10 @@ export function runDeterministic(
   }));
 
   return {
+    severity: "NOMINAL",
     primaryCall,
+    driverId: bestDriver,
+    targetCompound: bestPred.strategyId === "stay" ? "SOFT" : bestPred.strategyId === "box" ? "HARD" : "MEDIUM",
     predictedFinish: bestPred.predictedFinishPosition,
     confidence: Math.min(95, 70 + (100 - bestPred.predictedFinishPosition) * 2),
     rejoinWindow: "Lap " + (snapshot.totalLaps - 5),
@@ -122,7 +126,7 @@ export function runDeterministic(
   };
 }
 
-export function generateBriefing(options: StrategyAgentOptions): AgentBriefing {
+export async function generateBriefing(options: StrategyAgentOptions): Promise<AgentBriefing> {
   const { drivers, snapshot, circuitName, currentLap, totalLaps } = options;
 
   const predictions = predict({ drivers, snapshot, circuitName });

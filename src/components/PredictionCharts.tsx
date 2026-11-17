@@ -13,10 +13,10 @@ interface PredictionChartsProps {
 }
 
 export function PredictionCharts({ snapshot, drivers, customStrategies, currentLap }: PredictionChartsProps) {
-  const lapData = snapshot.laps
-    .filter((snap) => snap.lap <= currentLap + 5)
+  const lapData = (snapshot.laps ?? [])
+    .filter((snap) => snap.lap !== undefined && snap.lap <= currentLap + 5)
     .map((snap) => {
-      const entry: { lap: number } & Record<string, number> = { lap: snap.lap };
+      const entry: { lap: number } & Record<string, number> = { lap: snap.lap! };
       for (const d of drivers) {
         const driver = snap.drivers.find((x) => x.driverId === d);
         if (driver) entry[d] = driver.gapToLeader;

@@ -1,35 +1,29 @@
-/**
- * Monte Carlo + Lap-Time Integration race simulator.
- * Predicts where drivers will finish given current state and strategy options.
- */
+﻿import type { Compound, Driver, LapSnapshot, Strategy, SimulationResult } from "@/types/f1";
 
-import type { Compound, Driver, LapSnapshot, Strategy, SimulationResult } from "@/types/f1";
-
-const FUEL_BURN_PER_LAP = -0.055; // s/lap pace gain per lap of fuel burned
-const PIT_TIME_BASE = 23.0; // s, circuit-dependent average
-const PIT_TIME_VSC_SC = 20.5; // s, under VSC or full-course yellow
-const OVERTAKE_THRESHOLD = 1.2; // s gap needed to overtake (dirty air cost)
+const FUEL_BURN_PER_LAP = -0.055;
+const PIT_TIME_BASE = 23.0;
+const PIT_TIME_VSC_SC = 12.8;
+const OVERTAKE_THRESHOLD = 1.2;
 const MONTE_CARLO_ROLLUPS = 200;
-const LAP_TIME_SD = 0.35; // lap time normal distribution std deviation
+const LAP_TIME_SD = 0.32;
 
 interface CarState {
   driverId: string;
   position: number;
   lap: number;
-  gapToLeader: number;
-  lastLapTime: number | null;
+  cumulativeTime: number;
+  basePace: number;
   compound: Compound;
   tyreAge: number;
   pitStops: number;
-  targetLapsPerStint: number;
 }
 
-const COMPOUND_BASE: Record<Compound, { pace: number; cliffThreshold: number; cliffPenalty: number }> = {
-  SOFT: { pace: 0.0, cliffThreshold: 22, cliffPenalty: 0.7 },
-  MEDIUM: { pace: 0.35, cliffThreshold: 28, cliffPenalty: 0.9 },
-  HARD: { pace: 0.65, cliffThreshold: 35, cliffPenalty: 1.1 },
-  INTERMEDIATE: { pace: 0.5, cliffThreshold: 30, cliffPenalty: 0.8 },
-  WET: { pace: 1.2, cliffThreshold: 35, cliffPenalty: 1.5 },
+const COMPOUND_BASE: Record<Compound, { pace: number; degRate: number; cliffThreshold: number; cliffPenalty: number }> = {
+  SOFT: { pace: 0.0, degRate: 0.065, cliffThreshold: 18, cliffPenalty: 0.85 },
+  MEDIUM: { pace: 0.35, degRate: 0.042, cliffThreshold: 26, cliffPenalty: 0.95 },
+  HARD: { pace: 0.65, degRate: 0.025, cliffThreshold: 36, cliffPenalty: 1.1 },
+  INTERMEDIATE: { pace: 0.5, degRate: 0.04, cliffThreshold: 28, cliffPenalty: 0.9 },
+  WET: { pace: 1.2, degRate: 0.035, cliffThreshold: 34, cliffPenalty: 1.4 },
 };
 
 const CIRCUIT_PIT_TIMES: Record<string, number> = {
@@ -41,10 +35,11 @@ const CIRCUIT_PIT_TIMES: Record<string, number> = {
 };
 
 export interface PredictorOptions {
-  drivers: string[]; // select 1-3 drivers (e.g., ["LEC", "PIA", "VER"])
+  drivers: string[];
   snapshot: LapSnapshot;
+  currentLap?: number;
   circuitName?: string;
-  customStrategies?: Map<string, Strategy>;
+  customStrategies?: Map<string, Strategy | Strategy[]>;
 }
 
 export interface PredictorResult {
@@ -52,238 +47,280 @@ export interface PredictorResult {
   winnerId: string;
 }
 
-function toCarState(d: Driver, lap: number): CarState {
-  return {
-    driverId: d.driverId,
-    position: d.position,
-    lap,
-    gapToLeader: d.gapToLeader,
-    lastLapTime: d.lastLapTime ?? 120,
-    compound: d.compound,
-    tyreAge: d.tyreAge,
-    pitStops: d.pitStops,
-    targetLapsPerStint: (lap === 0 ? 18 : lap === 8 ? 20 : 22),
-  };
+function getPitLoss(circuitName: string, trackStatus: LapSnapshot["trackStatus"]): number {
+  if (trackStatus === "VSC" || trackStatus === "SC") return PIT_TIME_VSC_SC;
+  return CIRCUIT_PIT_TIMES[circuitName.toLowerCase()] ?? PIT_TIME_BASE;
 }
 
-function lapTime(base: number, stintRemaining: number, compound: Compound, tyreAge: number, fuelFactor: number): number {
+function computeLapDuration(
+  basePace: number,
+  compound: Compound,
+  tyreAge: number,
+  lapsRemaining: number,
+  rainfall: boolean
+): number {
   const c = COMPOUND_BASE[compound];
-  let time = base + c.pace + c.pace * (stintRemaining / 50) + fuelFactor;
+  let lapSec = basePace + c.pace + tyreAge * c.degRate + lapsRemaining * FUEL_BURN_PER_LAP;
   if (tyreAge > c.cliffThreshold) {
-    time += c.cliffPenalty + (tyreAge - c.cliffThreshold) * 0.04;
+    lapSec += c.cliffPenalty + (tyreAge - c.cliffThreshold) * 0.06;
   }
-  return time;
+  if (rainfall && compound !== "INTERMEDIATE" && compound !== "WET") {
+    lapSec += 4.8;
+  } else if (!rainfall && (compound === "INTERMEDIATE" || compound === "WET")) {
+    lapSec += 3.2;
+  }
+  return Math.max(65.0, lapSec);
 }
 
-function simulateRace(
-  driverId: string,
-  initialState: CarState,
-  strategy: Strategy,
-  totalLaps: number,
-  circuitName: string
-): CarState[] {
-  const trajectory: CarState[] = [];
-  let car: CarState = { ...initialState };
-  const pitTime =
-    circuitName && CIRCUIT_PIT_TIMES[circuitName.toLowerCase()]
-      ? CIRCUIT_PIT_TIMES[circuitName.toLowerCase()]
-      : PIT_TIME_BASE;
-  const pitLaps = new Set(strategy.pitLaps);
-  const compounds: Compound[] = strategy.compounds.length
-    ? strategy.compounds
-    : [car.compound];
-  let compoundIdx = 0;
+function buildFieldStates(snapshot: LapSnapshot, activeLap: number): CarState[] {
+  const lapRecord =
+    (snapshot.laps ?? []).find((l) => l.lap === activeLap) ??
+    (snapshot.laps ?? [])[(snapshot.laps ?? []).length - 1];
+  const sourceDrivers: Driver[] = lapRecord?.drivers?.length ? lapRecord.drivers : snapshot.drivers;
 
-  for (let lap = car.lap; lap <= totalLaps; lap++) {
-    const inPitWindow = pitLaps.has(lap);
-    if (inPitWindow && car.pitStops < strategy.pitLaps.length) {
-      compoundIdx = Math.min(car.pitStops, compounds.length - 1);
-      car = {
-        ...car,
-        lap,
-        compound: compounds[compoundIdx],
-        tyreAge: 0,
-        pitStops: car.pitStops + 1,
-        gapToLeader: car.gapToLeader + pitTime, // cost to complete lap
-      };
-    }
-    const baseTime = car.lastLapTime ?? 120;
-    const fuelFactor = (totalLaps - lap) * FUEL_BURN_PER_LAP;
-    const stintRemaining = Math.max(1, car.tyreAge + 1);
-    const predicted = lapTime(baseTime, stintRemaining, car.compound, car.tyreAge, fuelFactor);
-    // Add random variance for Monte Carlo
-    const noise = (Math.random() - 0.5) * 2 * LAP_TIME_SD;
-    car = {
-      ...car,
-      lap,
-      lastLapTime: predicted + noise,
-      gapToLeader: car.gapToLeader + predicted,
-      tyreAge: car.tyreAge + 1,
+  const leaderBase = Math.min(
+    ...sourceDrivers.map((d) => (d.lastLapTime && d.lastLapTime > 60 ? d.lastLapTime : 91.5))
+  );
+
+  return sourceDrivers.map((d) => {
+    const rawLap = d.lastLapTime && d.lastLapTime > 60 ? d.lastLapTime : leaderBase + d.position * 0.08;
+    const c = COMPOUND_BASE[d.compound] ?? COMPOUND_BASE.MEDIUM;
+    const inferredBase = rawLap - c.pace - Math.min(d.tyreAge, 25) * c.degRate;
+    return {
+      driverId: d.driverId,
+      position: d.position,
+      lap: activeLap,
+      cumulativeTime: Math.max(0, d.gapToLeader),
+      basePace: Math.max(70, inferredBase),
+      compound: d.compound,
+      tyreAge: d.tyreAge,
+      pitStops: d.pitStops,
     };
-    trajectory.push(car);
-  }
-  return trajectory;
+  });
 }
 
-function simulateAllDrivers(
-  driverStates: CarState[],
-  strategies: Map<string, Strategy>,
+function simulateFieldRollout(
+  initialField: CarState[],
+  targetDriverId: string,
+  targetStrategy: Strategy,
+  startLap: number,
   totalLaps: number,
-  circuitName: string
-): Map<string, CarState[]> {
-  const results = new Map<string, CarState[]>();
+  circuitName: string,
+  trackStatus: LapSnapshot["trackStatus"],
+  rainfall: boolean,
+  withNoise: boolean
+): {
+  finishPosition: number;
+  totalTime: number;
+  rejoinPosition: number;
+  rejoinGap: number;
+  trajectory: { lap: number; position: number; gapToLeader: number }[];
+} {
+  const cars: CarState[] = initialField.map((c) => ({ ...c }));
+  const pitLoss = getPitLoss(circuitName, trackStatus);
+  const targetPitSet = new Set(targetStrategy.pitLaps);
+  let targetStopIdx = 0;
+  let rejoinPosition = cars.find((c) => c.driverId === targetDriverId)?.position ?? 1;
+  let rejoinGap = 0;
+  let recordedFirstStop = false;
 
-  // For Monte Carlo, we simulate all drivers together
-  for (let mc = 0; mc < MONTE_CARLO_ROLLUPS; mc++) {
-    // Initialize all driver trajectories at current state
-    const allTrajectories: CarState[][] = driverStates.map(ds => [...Array(totalLaps - ds.lap + 1)].map((_, i) => ({
-      ...ds,
-      lap: ds.lap + i,
-    })));
+  const trajectory: { lap: number; position: number; gapToLeader: number }[] = [];
 
-    for (const [driverId, state] of driverStates.entries()) {
-      const strategy = strategies.get(driverId);
-      if (!strategy) continue;
+  for (let lap = startLap + 1; lap <= totalLaps; lap++) {
+    const lapsRemaining = totalLaps - lap;
 
-      const pitLaps = new Set(strategy.pitLaps);
-      const compounds: Compound[] = strategy.compounds.length
-        ? strategy.compounds
-        : [state.compound];
-      const pitTime = circuitName && CIRCUIT_PIT_TIMES[circuitName.toLowerCase()]
-        ? CIRCUIT_PIT_TIMES[circuitName.toLowerCase()]
-        : PIT_TIME_BASE;
+    for (const car of cars) {
+      let pittedThisLap = false;
 
-      let car = { ...state };
-      let compoundIdx = 0;
-
-      for (let lap = state.lap; lap <= totalLaps; lap++) {
-        const inPitWindow = pitLaps.has(lap);
-        if (inPitWindow && car.pitStops < strategy.pitLaps.length) {
-          compoundIdx = Math.min(car.pitStops, compounds.length - 1);
-          car = {
-            ...car,
-            lap,
-            compound: compounds[compoundIdx],
-            tyreAge: 0,
-            pitStops: car.pitStops + 1,
-            gapToLeader: car.gapToLeader + pitTime,
-          };
+      if (car.driverId === targetDriverId) {
+        if (targetPitSet.has(lap)) {
+          const nextComp =
+            targetStrategy.compounds[Math.min(targetStopIdx, targetStrategy.compounds.length - 1)] ?? "HARD";
+          targetStopIdx++;
+          car.compound = nextComp;
+          car.tyreAge = 0;
+          car.pitStops += 1;
+          car.cumulativeTime += pitLoss;
+          pittedThisLap = true;
         }
-        const baseTime = car.lastLapTime ?? 120;
-        const fuelFactor = (totalLaps - lap) * FUEL_BURN_PER_LAP;
-        const stintRemaining = Math.max(1, car.tyreAge + 1);
-        const c = COMPOUND_BASE[car.compound];
-        let time = baseTime + c.pace + c.pace * (stintRemaining / 50) + fuelFactor;
-        if (car.tyreAge > c.cliffThreshold) {
-          time += c.cliffPenalty + (car.tyreAge - c.cliffThreshold) * 0.04;
+      } else {
+        const threshold = COMPOUND_BASE[car.compound].cliffThreshold;
+        if (car.pitStops === 0 && car.tyreAge >= threshold && lapsRemaining > 5) {
+          car.compound = rainfall ? "INTERMEDIATE" : car.compound === "SOFT" ? "MEDIUM" : "HARD";
+          car.tyreAge = 0;
+          car.pitStops += 1;
+          car.cumulativeTime += pitLoss;
         }
-        const noise = (Math.random() - 0.5) * 2 * LAP_TIME_SD;
-        const predicted = time + noise;
-        car = {
-          ...car,
-          lap,
-          lastLapTime: predicted,
-          gapToLeader: car.gapToLeader + predicted,
-          tyreAge: car.tyreAge + 1,
-        };
-        allTrajectories[driverStates.findIndex(d => d.driverId === driverId)][lap - state.lap] = car;
+      }
+
+      const noise = withNoise ? (Math.random() - 0.5) * 2 * LAP_TIME_SD : 0;
+      const lapSec = computeLapDuration(car.basePace, car.compound, car.tyreAge, lapsRemaining, rainfall) + noise;
+      car.cumulativeTime += lapSec;
+      car.tyreAge += 1;
+      car.lap = lap;
+
+      if (pittedThisLap && !recordedFirstStop) {
+        recordedFirstStop = true;
+        const sortedNow = [...cars].sort((a, b) => a.cumulativeTime - b.cumulativeTime);
+        const idx = sortedNow.findIndex((c) => c.driverId === targetDriverId);
+        rejoinPosition = idx + 1;
+        rejoinGap = idx > 0 ? Number((sortedNow[idx].cumulativeTime - sortedNow[idx - 1].cumulativeTime).toFixed(2)) : 0;
       }
     }
 
-    // Store this Monte Carlo sample
-    // Actually, we need to aggregate across MC runs, not store individual runs
+    cars.sort((a, b) => a.cumulativeTime - b.cumulativeTime);
+    for (let i = 1; i < cars.length; i++) {
+      const gapAhead = cars[i].cumulativeTime - cars[i - 1].cumulativeTime;
+      if (gapAhead < 0.25 && cars[i].basePace > cars[i - 1].basePace - OVERTAKE_THRESHOLD * 0.25) {
+        cars[i].cumulativeTime = cars[i - 1].cumulativeTime + 0.28;
+      }
+    }
+
+    const leaderTime = cars[0].cumulativeTime;
+    cars.forEach((c, idx) => {
+      c.position = idx + 1;
+      if (c.driverId === targetDriverId) {
+        trajectory.push({
+          lap,
+          position: c.position,
+          gapToLeader: Number((c.cumulativeTime - leaderTime).toFixed(3)),
+        });
+      }
+    });
   }
 
-  // For simplicity, run single simulation for each driver individually
-  // In production, would run proper joint Monte Carlo
-  for (const [driverId, state] of driverStates.entries()) {
-    const strategy = strategies.get(driverId);
-    const traj = simulateRace(driverId, state, strategy!, totalLaps, circuitName || "silverstone");
-    results.set(driverId, traj);
-  }
-
-  return results;
+  const finalTarget = cars.find((c) => c.driverId === targetDriverId) ?? cars[0];
+  return {
+    finishPosition: finalTarget.position,
+    totalTime: Number(finalTarget.cumulativeTime.toFixed(3)),
+    rejoinPosition,
+    rejoinGap,
+    trajectory,
+  };
 }
 
-export function predict(
-  options: PredictorOptions
-): PredictorResult {
-  const { drivers, snapshot, circuitName, customStrategies } = options;
-  const currentLap = snapshot.laps[snapshot.laps.length - 1]?.lap ?? 1;
-  const totalLaps = snapshot.totalLaps;
+export function predict(options: PredictorOptions): PredictorResult {
+  const { drivers, snapshot, circuitName = snapshot.circuit || "silverstone", customStrategies } = options;
+  const activeLap =
+    options.currentLap ??
+    snapshot.currentLap ??
+    (snapshot.laps ?? [])[(snapshot.laps ?? []).length - 1]?.lap ??
+    1;
+  const totalLaps = Math.max(activeLap + 1, snapshot.totalLaps || 52);
+  const initialField = buildFieldStates(snapshot, activeLap);
+
   const defaultStrategies: Strategy[] = [
-    { id: "stay", label: "Stay Out", pitLaps: [], compounds: [], description: "No stops" },
-    { id: "box", label: "Box This Lap", pitLaps: [currentLap + 1], compounds: ["MEDIUM"], description: "Early stop onto medium" },
-    { id: "undercut", label: "Undercut", pitLaps: [currentLap + 1], compounds: ["SOFT"], description: "Soft undercut" },
-    { id: "two-stop", label: "Two-Stop Attack", pitLaps: [currentLap + 3, currentLap + 20], compounds: ["HARD", "MEDIUM"], description: "Aggressive two-stop" },
+    { id: "stay", label: "Stay Out / Extend", pitLaps: [], compounds: [], description: "0 remaining stops" },
+    {
+      id: "box",
+      label: "Box This Lap (Cover)",
+      pitLaps: [Math.min(totalLaps - 1, activeLap + 1)],
+      compounds: [snapshot.weather?.rainfall ? "INTERMEDIATE" : "HARD"],
+      description: "Immediate pit stop",
+    },
+    {
+      id: "undercut",
+      label: "Aggressive Undercut",
+      pitLaps: [Math.min(totalLaps - 1, activeLap + 1)],
+      compounds: [snapshot.weather?.rainfall ? "INTERMEDIATE" : "MEDIUM"],
+      description: "High-pace compound undercut",
+    },
+    {
+      id: "two-stop",
+      label: "Two-Stop Attack",
+      pitLaps: [Math.min(totalLaps - 4, activeLap + 2), Math.min(totalLaps - 1, activeLap + 18)],
+      compounds: ["MEDIUM", "SOFT"],
+      description: "Split remaining distance across 2 fresh stints",
+    },
   ];
 
   const predictions: Record<string, SimulationResult> = {};
 
   for (const driverId of drivers) {
-    const driver = snapshot.drivers.find((d) => d.driverId === driverId);
-    if (!driver) continue;
-    const initialState = toCarState(driver, currentLap);
-    const strategies = customStrategies?.get(driverId) ?? defaultStrategies;
+    const driverInField = initialField.find((c) => c.driverId === driverId);
+    if (!driverInField) continue;
+
+    const rawCustom = customStrategies?.get(driverId);
+    const strategies = rawCustom ? (Array.isArray(rawCustom) ? rawCustom : [rawCustom, ...defaultStrategies]) : defaultStrategies;
 
     let bestResult: SimulationResult | null = null;
-    let bestPos = 20;
+    let bestAvgPos = 99;
+    const allStrategyResults: SimulationResult[] = [];
 
     for (const strat of strategies) {
-      // Run Monte Carlo simulation
-      const positions: number[] = [];
+      let posSum = 0;
+      let winCount = 0;
+      let podiumCount = 0;
+      let timeSum = 0;
+
       for (let mc = 0; mc < MONTE_CARLO_ROLLUPS; mc++) {
-        // Simulate this driver with random variance
-        const traj = simulateRace(driverId, initialState, strat, totalLaps, circuitName || "silverstone");
-
-        // Get final position based on gap ranking among simulated drivers
-        const finalStates = traj.map(t => ({
-          driverId: t.driverId,
-          gapToLeader: t.gapToLeader,
-        }));
-
-        // Rank by gap
-        finalStates.sort((a, b) => a.gapToLeader - b.gapToLeader);
-        const pos = finalStates.findIndex(s => s.driverId === driverId) + 1;
-        positions.push(pos);
+        const sim = simulateFieldRollout(
+          initialField,
+          driverId,
+          strat,
+          activeLap,
+          totalLaps,
+          circuitName,
+          snapshot.trackStatus ?? "GREEN",
+          Boolean(snapshot.weather?.rainfall),
+          true
+        );
+        posSum += sim.finishPosition;
+        timeSum += sim.totalTime;
+        if (sim.finishPosition === 1) winCount++;
+        if (sim.finishPosition <= 3) podiumCount++;
       }
 
-      const finishedPos: number[] = positions.filter((p) => p <= totalLaps);
-      const avgPos = finishedPos.reduce((a, b) => a + b, 0) / finishedPos.length;
-      const podiumPct = (positions.filter((p) => p <= 3).length / MONTE_CARLO_ROLLUPS) * 100;
-      const winPct = (positions.filter((p) => p === 1).length / MONTE_CARLO_ROLLUPS) * 100;
-      const lastTraj = simulateRace(driverId, initialState, strat, totalLaps, circuitName || "silverstone");
-      const finalGap = lastTraj[lastTraj.length - 1].gapToLeader;
+      const deterministic = simulateFieldRollout(
+        initialField,
+        driverId,
+        strat,
+        activeLap,
+        totalLaps,
+        circuitName,
+        snapshot.trackStatus ?? "GREEN",
+        Boolean(snapshot.weather?.rainfall),
+        false
+      );
 
-      const result: SimulationResult = {
+      const avgPos = posSum / MONTE_CARLO_ROLLUPS;
+      const simResult: SimulationResult = {
         strategyId: strat.id,
-        predictedFinishPosition: Math.round(avgPos),
-        winProbability: winPct,
-        podiumProbability: podiumPct,
-        expectedTotalRaceTime: finalGap,
-        rejoinPosition: 11, // placeholder
-        rejoinGap: 0.5,
-        lapByLap: lastTraj.map((s) => ({
-          lap: s.lap,
-          position: s.position,
-          gapToLeader: s.gapToLeader,
-        })),
-        drivers: [],
+        predictedFinishPosition: Math.max(1, Math.round(avgPos)),
+        winProbability: Number(((winCount / MONTE_CARLO_ROLLUPS) * 100).toFixed(1)),
+        podiumProbability: Number(((podiumCount / MONTE_CARLO_ROLLUPS) * 100).toFixed(1)),
+        expectedTotalRaceTime: Number((timeSum / MONTE_CARLO_ROLLUPS).toFixed(2)),
+        rejoinPosition: deterministic.rejoinPosition,
+        rejoinGap: deterministic.rejoinGap,
+        lapByLap: deterministic.trajectory,
+        drivers,
       };
 
-      if (avgPos < bestPos) {
-        bestPos = avgPos;
-        bestResult = result;
+      allStrategyResults.push(simResult);
+
+      if (avgPos < bestAvgPos) {
+        bestAvgPos = avgPos;
+        bestResult = simResult;
       }
     }
 
-    predictions[driverId] = bestResult!;
+    if (!bestResult && allStrategyResults.length > 0) {
+      // Fallback: use the first available strategy result if bestResult was null
+      bestResult = allStrategyResults[0];
+    }
+
+    if (bestResult) {
+      bestResult.allStrategies = allStrategyResults;
+      predictions[driverId] = bestResult;
+    }
   }
 
-  const winner = Object.entries(predictions).reduce(
-    (best, [id, r]) => (r.predictedFinishPosition < (predictions[best]?.predictedFinishPosition ?? 21) ? id : best),
-    ""
+  const winnerId = Object.entries(predictions).reduce(
+    (best, [id, r]) =>
+      !best || r.predictedFinishPosition < predictions[best].predictedFinishPosition ? id : best,
+    drivers[0] ?? ""
   );
 
-  return { predictions, winner };
+  return { predictions, winnerId };
 }
+

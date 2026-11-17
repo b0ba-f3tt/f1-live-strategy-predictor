@@ -1,6 +1,6 @@
 "use client";
 
-import type { Driver, LapSnapshot } from "@/types/f1";
+import type { LapSnapshot, TrackStatus } from "@/types/f1";
 
 const TEAM_COLORS: Record<string, string> = {
   "Red Bull Racing": "from-[#1D3557] to-[#0D2544]",
@@ -20,11 +20,18 @@ const TEAM_COLORS: Record<string, string> = {
 };
 
 const COMPOUND_BADGES: Record<string, string> = {
-  SOFT: "bg-orange-500",
-  MEDIUM: "bg-yellow-400",
-  HARD: "bg-gray-500",
-  INTERMEDIATE: "bg-teal-500",
-  WET: "bg-blue-500",
+  SOFT: "bg-red-500 text-white",
+  MEDIUM: "bg-yellow-400 text-black",
+  HARD: "bg-gray-200 text-black",
+  INTERMEDIATE: "bg-emerald-500 text-white",
+  WET: "bg-blue-500 text-white",
+};
+
+const TRACK_STATUS_COLORS: Record<TrackStatus, string> = {
+  GREEN: "bg-green-500",
+  YELLOW: "bg-yellow-400",
+  VSC: "bg-orange-500",
+  SC: "bg-red-500",
 };
 
 interface TimingTowerProps {
@@ -34,28 +41,10 @@ interface TimingTowerProps {
 
 export function TimingTower({ snapshot, drivers }: TimingTowerProps) {
   const { drivers: allDrivers, weather, trackStatus } = snapshot;
-
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case "GREEN":
-        return "bg-green-500";
-      case "YELLOW":
-        return "bg-yellow-400";
-      case "VSC":
-        return "bg-orange-500";
-      case "SC":
-        return "bg-red-500";
-      default:
-        return "bg-green-500";
-    }
-  };
-
-  const trackStatusColors = {
-    GREEN: "bg-green-500",
-    YELLOW: "bg-yellow-400",
-    VSC: "bg-orange-500",
-    SC: "bg-red-500",
-  };
+  const activeStatus: TrackStatus =
+    typeof trackStatus === "string"
+      ? trackStatus
+      : (trackStatus as unknown as LapSnapshot)?.trackStatus ?? "GREEN";
 
   return (
     <div className="bg-black/20 border border-white/10 rounded-lg p-3 flex flex-col gap-3">
@@ -74,8 +63,8 @@ export function TimingTower({ snapshot, drivers }: TimingTowerProps) {
           )}
         </div>
         <div className="flex items-center gap-2">
-          <span className="text-xs uppercase tracking-wider">Track</span>
-          <div className={`w-3 h-3 rounded-full ${trackStatusColors[trackStatus]}`} />
+          <span className="text-xs uppercase tracking-wider">{activeStatus}</span>
+          <div className={`w-3 h-3 rounded-full ${TRACK_STATUS_COLORS[activeStatus] ?? "bg-green-500"}`} />
         </div>
       </div>
 
@@ -94,13 +83,13 @@ export function TimingTower({ snapshot, drivers }: TimingTowerProps) {
               <div className="w-6 text-right">{d.position}</div>
               <span>{d.driverId}</span>
               <div className={`w-2 h-2 rounded-full bg-gradient-to-r ${teamColor}`} />
-              <span className={`px-1 rounded text-[10px] ${COMPOUND_BADGES[d.compound] || "bg-gray-500"}`}>
-                {d.compound[0]}
+              <span className={`px-1 rounded text-[10px] font-bold ${COMPOUND_BADGES[d.compound] || "bg-gray-500 text-white"}`}>
+                {d.compound?.[0] ?? "M"}
               </span>
               <span className="w-8 text-center">T:{d.tyreAge}</span>
               <span className="w-12 text-right">{d.pitStops}</span>
               <div className="flex-1 text-right">
-                {d.gapToLeader > 0 ? `+${d.gapToLeader.toFixed(2)}s` : d.gapToLeader.toFixed(2)}s
+                {d.gapToLeader > 0 ? `+${d.gapToLeader.toFixed(2)}s` : `${d.gapToLeader.toFixed(2)}s`}
               </div>
             </div>
           );

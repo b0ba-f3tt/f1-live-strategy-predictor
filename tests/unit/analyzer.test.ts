@@ -56,7 +56,7 @@ describe("Telemetry Analyzer", () => {
         laps: [],
       };
 
-      const cliffs = detectTireCliffs(snapshot.laps, "LEC");
+      const cliffs = detectTireCliffs(snapshot.laps ?? [], "LEC");
       expect(cliffs).toEqual([]);
     });
   });
