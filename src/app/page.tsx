@@ -1,23 +1,14 @@
-"use client";
+﻿"use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { PitWallHeader } from "@/components/PitWallHeader";
 import { TimingTower } from "@/components/TimingTower";
 import { PredictionCharts } from "@/components/PredictionCharts";
 import { StrategySandbox } from "@/components/StrategySandbox";
 import { AgentBriefingPanel } from "@/components/AgentBriefingPanel";
-import type { LapSnapshot, AgentBriefing, Driver, Compound, Strategy } from "@/types/f1";
-
-const PRESETS = ["silverstone", "monza", "singapore"] as const;
+import type { LapSnapshot, AgentBriefing, Strategy } from "@/types/f1";
 
 const DEFAULT_DRIVERS = ["LEC", "VER", "NOR"];
-
-const DEFAULT_STRATEGIES: Strategy[] = [
-  { id: "stay", label: "Stay Out", pitLaps: [], compounds: [], description: "No stops" },
-  { id: "box", label: "Box This Lap", pitLaps: [1, 2, 3, 4, 5], compounds: ["MEDIUM"], description: "Early stop onto medium" },
-  { id: "undercut", label: "Undercut", pitLaps: [1, 2, 3, 4, 5], compounds: ["SOFT"], description: "Soft undercut" },
-  { id: "two-stop", label: "Two-Stop Attack", pitLaps: [3, 15], compounds: ["HARD", "MEDIUM"], description: "Aggressive two-stop" },
-];
 
 export default function Home() {
   const [snapshot, setSnapshot] = useState<LapSnapshot | null>(null);
@@ -26,41 +17,71 @@ export default function Home() {
   const [isLive, setIsLive] = useState(false);
   const [currentLap, setCurrentLap] = useState(1);
   const [selectedPreset, setSelectedPreset] = useState("silverstone");
-  const [customStrategies, setCustomStrategies] = useState<Map<string, Strategy>>(new Map());
-  const [loading, setLoading] = useState(true);
+  const [customStrategies, setCustomStrategies] = useState>(new Map());
+  const [initialError, setInitialError] = useState<string | null>(null);
 
-  // Load preset on mount
   useEffect(() => {
     loadPreset(selectedPreset);
   }, [selectedPreset]);
 
-  // Fetch data and generate briefing
+  const activeSnapshot = useMemo<LapSnapshot | null>(() => {
+    if (!snapshot) return null;
+    const allLaps = snapshot.laps ?? [];
+    const lapSlice = allLaps.find((l) => l.lap === currentLap);
+    if (!lapSlice) return { ...snapshot, currentLap, lap: currentLap };
+    return {
+      ...snapshot,
+      currentLap,
+      lap: currentLap,
+      drivers: lapSlice.drivers?.length ? lapSlice.drivers : snapshot.drivers,
+      weather: lapSlice.weather ?? snapshot.weather,
+      trackStatus: lapSlice.trackStatus ?? snapshot.trackStatus,
+    };
+  }, [snapshot, currentLap]);
+
   useEffect(() => {
-    if (!snapshot) return;
-    setLoading(true);
-    fetch(`/api/agent`, {
+    if (!activeSnapshot) return;
+    let cancelled = false;
+
+    fetch("/api/agent", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         driverIds: drivers,
-        snapshot,
+        snapshot: activeSnapshot,
         currentLap,
         circuit: selectedPreset,
+        customStrategies: Object.fromEntries(customStrategies),
       }),
     })
-      .then((r) => r.json())
-      .then(setBriefing)
-      .finally(() => setLoading(false));
-  }, [snapshot, drivers, currentLap, selectedPreset]);
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (!cancelled && data && !data.error) {
+          setBriefing(data);
+        }
+      })
+      .catch((err) => {
+        console.error("Agent briefing failed:", err);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeSnapshot, drivers, currentLap, selectedPreset, customStrategies]);
 
   async function loadPreset(preset: string) {
+    setIsLive(false);
+    setInitialError(null);
     try {
-      const res = await fetch(`/api/presets/${preset}`);
-      const data = await res.json();
+      const res = await fetch(`/api/telemetry?preset=${encodeURIComponent(preset)}`);
+      if (!res.ok) throw new Error(`Telemetry HTTP ${res.status}`);
+      const data: LapSnapshot = await res.json();
       setSnapshot(data);
-      setCurrentLap(1);
+      const startLap = data.laps?.[0]?.lap ?? data.currentLap ?? 1;
+      setCurrentLap(startLap);
     } catch (e) {
       console.error("Failed to load preset:", e);
+      setInitialError("Unable to load race telemetry. Please refresh.");
     }
   }
 
@@ -68,9 +89,12 @@ export default function Home() {
     setIsLive(true);
     try {
       const res = await fetch(`/api/telemetry?sessionKey=${sessionKey}`);
-      const data = await res.json();
+      if (!res.ok) throw new Error(`Live session HTTP ${res.status}`);
+      const data: LapSnapshot = await res.json();
       setSnapshot(data);
+      setCurrentLap(data.currentLap || 1);
     } catch (e) {
+      console.error("Live fetch error:", e);
       setIsLive(false);
     }
   }
@@ -81,12 +105,12 @@ export default function Home() {
     setCustomStrategies(newMap);
   }
 
-  if (loading || !snapshot) {
+  if (!activeSnapshot) {
     return (
-      <div className="flex h-screen w-full items-center justify-center">
+      <div className="flex h-screen w-full items-center justify-center bg-[#0A0C10] text-white">
         <div className="text-center">
           <h1 className="text-2xl font-bold mb-4">F1 Live Strategy Predictor</h1>
-          <p className="text-muted-foreground">Loading race data...</p>
+          <p className="text-gray-400">{initialError ?? "Loading pit-wall telemetry..."}</p>
         </div>
       </div>
     );
@@ -102,16 +126,16 @@ export default function Home() {
         onLiveFetch={loadLiveSession}
         isLive={isLive}
         currentLap={currentLap}
-        totalLaps={snapshot.totalLaps}
+        totalLaps={activeSnapshot.totalLaps}
         onLapChange={setCurrentLap}
       />
       <div className="flex-1 flex flex-row gap-4 p-4 overflow-hidden">
-        <div className="w-1/3 flex flex-col gap-4">
-          <TimingTower snapshot={snapshot} drivers={drivers} />
+        <div className="w-1/3 flex flex-col gap-4 overflow-y-auto">
+          <TimingTower snapshot={activeSnapshot} drivers={drivers} />
         </div>
-        <div className="w-1/2 flex flex-col gap-4">
+        <div className="w-1/2 flex flex-col gap-4 overflow-y-auto">
           <PredictionCharts
-            snapshot={snapshot}
+            snapshot={activeSnapshot}
             drivers={drivers}
             customStrategies={customStrategies}
             currentLap={currentLap}
@@ -120,15 +144,15 @@ export default function Home() {
             drivers={drivers}
             onStrategyChange={handleStrategyChange}
             currentLap={currentLap}
-            totalLaps={snapshot.totalLaps}
+            totalLaps={activeSnapshot.totalLaps}
             circuit={selectedPreset}
           />
         </div>
-        <div className="w-1/4 flex flex-col gap-4">
+        <div className="w-1/4 flex flex-col gap-4 overflow-y-auto">
           <AgentBriefingPanel
             briefing={briefing}
             drivers={drivers}
-            snapshot={snapshot}
+            snapshot={activeSnapshot}
           />
         </div>
       </div>
