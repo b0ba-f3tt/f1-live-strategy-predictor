@@ -1,0 +1,11 @@
+.env
+.env.local
+.env.*.local
+.venv/
+node_modules/
+.next/
+out/
+.cache/
+vitest/
+*.log
+.DS_Store

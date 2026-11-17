@@ -1,0 +1,31 @@
+{
+  "name": "f1-live-strategy-predictor",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "test": "vitest run",
+    "test:dev": "vitest",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "lucide-react": "0.516.0",
+    "next": "15.3.4",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "recharts": "2.13.3",
+    "zod": "3.24.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.17",
+    "@types/react": "18.3.12",
+    "@types/react-dom": "18.3.1",
+    "eslint": "9.15.0",
+    "eslint-config-next": "15.3.4",
+    "typescript": "5.5.4",
+    "vitest": "^2.0.0"
+  }
+}

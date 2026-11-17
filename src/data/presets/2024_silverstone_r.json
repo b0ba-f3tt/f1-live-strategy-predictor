@@ -1,0 +1,35 @@
+{
+  "name": "2024 British Grand Prix - Silverstone",
+  "circuit": "Silverstone",
+  "totalLaps": 60,
+  "weather": {
+    "airTemp": 16,
+    "trackTemp": 22,
+    "rainfall": false,
+    "flag": "GREEN"
+  },
+  "trackStatus": "GREEN",
+  "drivers": [
+    {"driverId": "LEC", "teamName": "Ferrari", "teamColor": "#DC143C", "position": 1, "gapAhead": null, "gapToLeader": 0, "intervalAhead": null, "compound": "SOFT", "tyreAge": 0, "pitStops": 0, "lastLapTime": 93.5},
+    {"driverId": "VER", "teamName": "Red Bull Racing", "teamColor": "#1D3557", "position": 2, "gapAhead": null, "gapToLeader": 0.8, "intervalAhead": null, "compound": "SOFT", "tyreAge": 0, "pitStops": 0, "lastLapTime": 93.7},
+    {"driverId": "NOR", "teamName": "McLaren", "teamColor": "#F14A68", "position": 3, "gapAhead": null, "gapToLeader": 1.5, "intervalAhead": null, "compound": "SOFT", "tyreAge": 0, "pitStops": 0, "lastLapTime": 94.0},
+    {"driverId": "HAM", "teamName": "Mercedes", "teamColor": "#006E51", "position": 4, "gapAhead": null, "gapToLeader": 2.1, "intervalAhead": null, "compound": "SOFT", "tyreAge": 0, "pitStops": 0, "lastLapTime": 94.4},
+    {"driverId": "PIA", "teamName": "Aston Martin", "teamColor": "#006A62", "position": 5, "gapAhead": null, "gapToLeader": 3.2, "intervalAhead": null, "compound": "SOFT", "tyreAge": 0, "pitStops": 0, "lastLapTime": 95.1},
+    {"driverId": "RUS", "teamName": "Mercedes", "teamColor": "#006E51", "position": 6, "gapAhead": null, "gapToLeader": 4.8, "intervalAhead": null, "compound": "SOFT", "tyreAge": 0, "pitStops": 0, "lastLapTime": 95.8},
+    {"driverId": "ALO", "teamName": "Aston Martin", "teamColor": "#006A62", "position": 7, "gapAhead": null, "gapToLeader": 5.9, "intervalAhead": null, "compound": "SOFT", "tyreAge": 0, "pitStops": 0, "lastLapTime": 96.5},
+    {"driverId": "SAI", "teamName": "Ferrari", "teamColor": "#DC143C", "position": 8, "gapAhead": null, "gapToLeader": 7.1, "intervalAhead": null, "compound": "SOFT", "tyreAge": 0, "pitStops": 0, "lastLapTime": 97.2},
+    {"driverId": "LAR", "teamName": "Alpine", "teamColor": "#006A62", "position": 9, "gapAhead": null, "gapToLeader": 8.3, "intervalAhead": null, "compound": "MEDIUM", "tyreAge": 0, "pitStops": 0, "lastLapTime": 98.5},
+    {"driverId": "OCO", "teamName": "Alpine", "teamColor": "#006A62", "position": 10, "gapAhead": null, "gapToLeader": 9.8, "intervalAhead": null, "compound": "MEDIUM", "tyreAge": 0, "pitStops": 0, "lastLapTime": 99.2},
+    {"driverId": "ALB", "teamName": "Williams", "teamColor": "#005AFF", "position": 11, "gapAhead": null, "gapToLeader": 12.4, "intervalAhead": null, "compound": "HARD", "tyreAge": 0, "pitStops": 0, "lastLapTime": 101.0},
+    {"driverId": "ZHO", "teamName": "Haas", "teamColor": "#B6B6B6", "position": 12, "gapAhead": null, "gapToLeader": 13.8, "intervalAhead": null, "compound": "HARD", "tyreAge": 0, "pitStops": 0, "lastLapTime": 101.8},
+    {"driverId": "COL", "teamName": "Haas", "teamColor": "#B6B6B6", "position": 13, "gapAhead": null, "gapToLeader": 14.9, "intervalAhead": null, "compound": "HARD", "tyreAge": 0, "pitStops": 0, "lastLapTime": 102.4},
+    {"driverId": "FAR", "teamName": "Alfa Romeo", "teamColor": "#9A031E", "position": 14, "gapAhead": null, "gapToLeader": 16.2, "intervalAhead": null, "compound": "HARD", "tyreAge": 0, "pitStops": 0, "lastLapTime": 103.1},
+    {"driverId": "DAN", "teamName": "Red Bull Racing", "teamColor": "#1D3557", "position": 15, "gapAhead": null, "gapToLeader": 17.7, "intervalAhead": null, "compound": "HARD", "tyreAge": 0, "pitStops": 0, "lastLapTime": 103.8},
+    {"driverId": "PER", "teamName": "Alfa Romeo", "teamColor": "#9A031E", "position": 16, "gapAhead": null, "gapToLeader": 19.3, "intervalAhead": null, "compound": "HARD", "tyreAge": 0, "pitStops": 0, "lastLapTime": 104.6},
+    {"driverId": "GAS", "teamName": "Aston Martin", "teamColor": "#006A62", "position": 17, "gapAhead": null, "gapToLeader": 20.9, "intervalAhead": null, "compound": "HARD", "tyreAge": 0, "pitStops": 0, "lastLapTime": 105.4},
+    {"driverId": "ETC", "teamName": "Alfa Romeo", "teamColor": "#9A031E", "position": 18, "gapAhead": null, "gapToLeader": 22.4, "intervalAhead": null, "compound": "HARD", "tyreAge": 0, "pitStops": 0, "lastLapTime": 106.2},
+    {"driverId": "MAR", "teamName": "Williams", "teamColor": "#005AFF", "position": 19, "gapAhead": null, "gapToLeader": 24.1, "intervalAhead": null, "compound": "HARD", "tyreAge": 0, "pitStops": 0, "lastLapTime": 107.0},
+    {"driverId": "DEV", "teamName": "Alfa Romeo", "teamColor": "#9A031E", "position": 20, "gapAhead": null, "gapToLeader": 25.8, "intervalAhead": null, "compound": "HARD", "tyreAge": 0, "pitStops": 0, "lastLapTime": 107.8}
+  ],
+  "laps": []
+}
