@@ -9,3 +9,6 @@ out/
 vitest/
 *.log
 .DS_Store
+.vercel
+
+tsconfig.tsbuildinfo
