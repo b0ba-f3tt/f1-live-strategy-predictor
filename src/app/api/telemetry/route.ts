@@ -59,9 +59,9 @@ export async function GET(request: Request) {
   try {
     const key = sessionKey === "latest" ? "latest" : String(parseInt(sessionKey, 10));
     const [driversRes, intervalsRes, weatherRes] = await Promise.all([
-      fetch(${OPENF1_BASE}/drivers?session_key=, { next: { revalidate: 15 } }),
-      fetch(${OPENF1_BASE}/intervals?session_key=, { next: { revalidate: 15 } }),
-      fetch(${OPENF1_BASE}/weather?session_key=, { next: { revalidate: 30 } }),
+      fetch(`${OPENF1_BASE}/drivers?session_key=${key}`, { next: { revalidate: 15 } }),
+      fetch(`${OPENF1_BASE}/intervals?session_key=${key}`, { next: { revalidate: 15 } }),
+      fetch(`${OPENF1_BASE}/weather?session_key=${key}`, { next: { revalidate: 30 } }),
     ]);
 
     const driversData = driversRes.ok ? await driversRes.json() : [];
@@ -86,10 +86,10 @@ export async function GET(request: Request) {
     const drivers: Driver[] = driversData.slice(0, 20).map((d: Record<string, unknown>, idx: number) => {
       const drvNum = typeof d.driver_number === "number" ? d.driver_number : idx + 1;
       const interval = latestIntervals.get(drvNum);
-      const rawTeamColor = typeof d.team_colour === "string" && d.team_colour ? # : "#3B82F6";
+      const rawTeamColor = typeof d.team_colour === "string" && d.team_colour ? `#${d.team_colour.replace(/^#/, "")}` : "#3B82F6";
       return {
-        driverId: String(d.name_acronym || d.broadcast_name || DRV),
-        driverName: String(d.full_name || d.name_acronym || Driver ),
+        driverId: String(d.name_acronym || d.broadcast_name || `DRV${drvNum}`),
+        driverName: String(d.full_name || d.name_acronym || `Driver ${drvNum}`),
         teamName: String(d.team_name || "Constructor"),
         teamColor: rawTeamColor,
         position: idx + 1,
@@ -105,7 +105,7 @@ export async function GET(request: Request) {
 
     const snapshot: LapSnapshot = {
       sessionId: key,
-      name: OpenF1 Live Session (),
+      name: `OpenF1 Live Session (${key})`,
       circuit: "Live Circuit",
       totalLaps: 53,
       currentLap: 1,
