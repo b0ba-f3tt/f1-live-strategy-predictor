@@ -17,7 +17,7 @@ export default function Home() {
   const [isLive, setIsLive] = useState(false);
   const [currentLap, setCurrentLap] = useState(1);
   const [selectedPreset, setSelectedPreset] = useState("silverstone");
-  const [customStrategies, setCustomStrategies] = useState>(new Map());
+  const [customStrategies, setCustomStrategies] = useState(() => new Map());
   const [initialError, setInitialError] = useState<string | null>(null);
 
   useEffect(() => {
